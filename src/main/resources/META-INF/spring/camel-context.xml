@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Copyright 2014-2017, Red Hat, Inc. and/or its affiliates, and individual
+    contributors by the @authors tag. 
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<!-- Configures the Camel Context-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="        http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd        http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd">
+    <import resource="classpath:META-INF/spring/camel-cxf.xml"/>
+    <bean class="com.mycompany.PropertyProcess" id="propProc"/>
+    <bean class="com.mycompany.CustomerProcess" id="cusProc"/>
+    <bean class="com.mycompany.CustomerBuilder" id="cusBuilder"/>
+    <camelContext id="_camelContext1" xmlns="http://camel.apache.org/schema/spring">
+        <properties>
+            <!-- enable Jackson json type converter -->
+            <property key="CamelJacksonEnableTypeConverter" value="true"/>
+            <!-- allow Jackson json to convert to pojo types also -->
+            <property key="CamelJacksonTypeConverterToPojo" value="true"/>
+        </properties>
+        <!-- the order service REST web services using restlet component -->
+        <route id="_route1" streamCache="true">
+            <from id="_from1" uri="file://src/main/resources/customer?noop=true"/>
+            <onException id="_onException1" useOriginalMessage="true">
+                <exception>java.lang.Exception</exception>
+                <onWhen>
+                    <simple>${exception.message} contains 'Customer already exists'</simple>
+                </onWhen>
+                <handled>
+                    <constant>true</constant>
+                </handled>
+                <to id="_to1" uri="direct:sendError"/>
+            </onException>
+            <onException id="_onException2">
+                <exception>java.lang.Exception</exception>
+                <onWhen>
+                    <simple>${exception.message} contains 'Customer not found'</simple>
+                </onWhen>
+                <continued>
+                    <constant>true</constant>
+                </continued>
+            </onException>
+            <process id="_process1" ref="propProc"/>
+            <to id="_to2" pattern="InOut" uri="cxf:bean:customerPortType"/>
+            <choice id="_choice1">
+                <when id="_when1">
+                    <simple>${body} != null</simple>
+                    <throwException exceptionType="java.lang.Exception"
+                        id="_throwException1" message="Customer already exists"/>
+                </when>
+                <otherwise id="_otherwise1">
+                    <process id="_process2" ref="cusProc"/>
+                    <marshal id="_marshal1">
+                        <json library="Jackson"/>
+                    </marshal>
+                    <setHeader headerName="CamelHttpMethod" id="_setHeader1">
+                        <constant>POST</constant>
+                    </setHeader>
+                    <to id="_to3" pattern="InOut" uri="http://localhost:9002/customers/create"/>
+                    <log id="_log1" message="${body}"/>
+                    <to id="_to4" uri="direct:toCsv"/>
+                </otherwise>
+            </choice>
+        </route>
+        <route id="_route2">
+            <from id="_from2" uri="direct:sendError"/>
+            <to id="_to5" uri="file://target/error"/>
+        </route>
+        <route id="_route3">
+            <from id="_from3" uri="direct:toCsv"/>
+            <bean id="_bean1" ref="cusBuilder"/>
+            <marshal id="_marshal2">
+                <bindy classType="com.mycompany.Customer" type="Csv"/>
+            </marshal>
+            <to id="_to6" uri="file://target/success/?fileName=${property.firstName}_${property.lastName}.csv"/>
+        </route>
+    </camelContext>
+</beans>
